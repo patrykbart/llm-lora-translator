@@ -1,0 +1,20 @@
+[project]
+name = "llm-lora-translator"
+version = "1.0.0"
+description = "Default template for PDM package"
+authors = [
+    {name = "Patryk Bartkowiak", email = "patrykbart99@gmail.com"},
+]
+dependencies = ["torch==2.5.1", "transformers[torch]==4.46.3", "ipykernel==6.29.5", "ipywidgets==8.1.5", "accelerate==1.1.1", "peft==0.13.2", "datasets==3.1.0"]
+requires-python = "==3.11.*"
+readme = "README.md"
+license = {text = "MIT"}
+
+[[tool.pdm.source]]
+url = "https://download.pytorch.org/whl/cu124"
+verify_ssl = true
+include_packages = ["torch", "torchvision", "torchaudio"]
+name = "cuda"
+
+[tool.pdm]
+distribution = false
