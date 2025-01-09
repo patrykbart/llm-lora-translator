@@ -1,18 +1,21 @@
 import json
 import logging
 from pathlib import Path
+import numpy as np
 from datasets import load_dataset
+from sklearn.metrics import top_k_accuracy_score
 from transformers import (
-    AutoTokenizer,
-    AutoModelForCausalLM,
     DataCollatorForLanguageModeling,
     Trainer,
     TrainingArguments,
 )
-import numpy as np
-import torch
-from sklearn.metrics import top_k_accuracy_score
+from utils import load_config, load_model_and_tokenizer
 
+# Constants
+INVALID_LABEL = -100
+TOP_K_VALUES = [5, 25, 100]
+
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -20,13 +23,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-def load_config(config_path: Path) -> dict:
-    with open(config_path, "r") as f:
-        return json.load(f)
-
-
 def compute_metrics(eval_pred):
+    """Compute top-k accuracy metrics for evaluation predictions."""
     predictions, labels = eval_pred
 
     # Flatten predictions and labels
@@ -34,7 +32,7 @@ def compute_metrics(eval_pred):
     labels = labels.reshape(-1)
 
     # Create a mask for valid labels
-    valid_mask = labels != -100
+    valid_mask = labels != INVALID_LABEL
 
     # Apply the mask to filter predictions and labels
     filtered_predictions = predictions[valid_mask]
@@ -44,34 +42,18 @@ def compute_metrics(eval_pred):
     label_range = np.arange(predictions.shape[-1])
 
     # Compute top-k accuracies
-    top_5_accuracy = top_k_accuracy_score(filtered_labels, filtered_predictions, k=5, labels=label_range)
-    top_25_accuracy = top_k_accuracy_score(filtered_labels, filtered_predictions, k=25, labels=label_range)
-    top_100_accuracy = top_k_accuracy_score(filtered_labels, filtered_predictions, k=100, labels=label_range)
-
-    return {
-        "top_5_accuracy": top_5_accuracy,
-        "top_25_accuracy": top_25_accuracy,
-        "top_100_accuracy": top_100_accuracy,
+    accuracies = {
+        f"top_{k}_accuracy": top_k_accuracy_score(filtered_labels, filtered_predictions, k=k, labels=label_range)
+        for k in TOP_K_VALUES
     }
 
-def main():
-    model = "lora_r32"
+    return accuracies
 
-    # Setup paths
-    current_dir = Path(__file__).parent
-    config = load_config(current_dir / "config.json")
-    model_dir = current_dir.parent / "outputs" / model / "final-model"
-    output_dir = current_dir.parent / "eval_outputs" / model
-
-    # Load model and tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    model = AutoModelForCausalLM.from_pretrained(model_dir, device_map="auto", torch_dtype=torch.float16)
-        
-    # Load pre-split dataset
-    eval_dataset = load_dataset("wikimedia/wikipedia", "20231101.en", split="train[-20:]", cache_dir="./cache")
+def prepare_dataset(tokenizer, model, split: str = "train[-20:]"):
+    """Load and tokenize the evaluation dataset."""
+    eval_dataset = load_dataset("wikimedia/wikipedia", "20231101.en", split=split, cache_dir="./cache")
     logger.info(f"Loaded evaluation dataset with {len(eval_dataset)} samples.")
 
-    # Tokenize the evaluation dataset
     def tokenize_function(examples):
         return tokenizer(
             examples['text'],
@@ -79,7 +61,7 @@ def main():
             max_length=model.config.max_position_embeddings,
             padding='max_length',
         )
-    
+
     tokenized_eval_dataset = eval_dataset.map(
         tokenize_function,
         batched=True,
@@ -88,11 +70,25 @@ def main():
         desc='Tokenizing',
     )
     logger.info(f'Tokenized dataset:\n{tokenized_eval_dataset}')
+    return tokenized_eval_dataset
+
+def main():
+    model_name = "lora_r32"
+
+    # Setup paths
+    current_dir = Path(__file__).parent
+    config = load_config(current_dir / "config.json")
+    model_dir = current_dir.parent / "outputs" / model_name / "final-model"
+    output_dir = current_dir.parent / "eval_outputs" / model_name
+
+    # Load model and tokenizer
+    model, tokenizer = load_model_and_tokenizer(model_dir)
+
+    # Prepare dataset
+    tokenized_eval_dataset = prepare_dataset(tokenizer, model)
 
     # Initialize Data Collator
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer, mlm=False  # Causal language modeling
-    )
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     # Initialize Trainer
     training_args = TrainingArguments(
