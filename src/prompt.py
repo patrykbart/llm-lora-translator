@@ -26,7 +26,7 @@ def load_model_and_tokenizer(model_dir: str):
 
     return model, tokenizer
 
-def generate_response(prompt: str, model, tokenizer, max_length=128, temperature=0.0, top_p=0.9):
+def generate_response(prompt: str, model, tokenizer, max_length=128, temperature=0.0):
     """
     Generate a response from the model for a given prompt.
     """
@@ -34,21 +34,17 @@ def generate_response(prompt: str, model, tokenizer, max_length=128, temperature
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     # Generate response
-    outputs = model.generate(
-        inputs["input_ids"],
-        max_length=max_length,
-        temperature=temperature,
-        top_p=top_p,
-        do_sample=True
-    )
+    outputs = model.generate(inputs["input_ids"], max_length=max_length, temperature=temperature, do_sample=True)
 
     # Decode the generated tokens
     response = tokenizer.decode(outputs[0], skip_special_tokens=True)
     return response
 
 def main():
+    model = "lora_r64"
+
     # Path to the directory where the final model with LoRA weights is saved
-    model_dir = "./outputs/2025-01-07_22-16-34/final-model"
+    model_dir = f"./outputs/{model}/final-model"
 
     # Load the model and tokenizer
     model, tokenizer = load_model_and_tokenizer(model_dir)
