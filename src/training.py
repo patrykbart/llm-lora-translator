@@ -17,6 +17,7 @@ from transformers import (
     TrainingArguments,
     Trainer
 )
+import torch.multiprocessing as mp
 
 logging.basicConfig(
     level=logging.INFO, 
@@ -39,18 +40,16 @@ def load_config(config_path: Path) -> dict:
         return json.load(f)
 
 def main():   
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
     # Setup paths
     current_dir = Path(__file__).parent
     config = load_config(current_dir / 'config.json')
-    output_dir = Path(f'./outputs/{timestamp}')
+    output_dir = Path(f'./outputs/lora_r{config["lora_r"]}')
 
     # Set seed
     set_seed(config['seed'])
 
     # Initialize W&B
-    wandb.init(project='llm-lora-translator', config=config, name=timestamp)
+    wandb.init(project='llm-lora-translator', config=config, name=f'lora_r{config["lora_r"]}')
 
     num_proc = min(multiprocessing.cpu_count() - 1, 16)
     logger.info(f'Number of processes: {num_proc}')
@@ -62,10 +61,11 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         device_map="auto",
-        # torch_dtype=torch.float16,
+        torch_dtype=torch.float16,
         cache_dir="./cache",
     )
     logger.info(f'Loaded model: {model.__class__.__name__}')
+    logger.info(f"Using device: {model.device}")
 
     dataset = load_dataset("wikimedia/wikipedia", "20231101.en", split='train', cache_dir="./cache", num_proc=num_proc)
     logger.info(f'Loaded dataset:\n{dataset}')
@@ -87,7 +87,7 @@ def main():
     tokenized_datasets = dataset.map(
         tokenize_function,
         batched=True,
-        num_proc=num_proc,
+        num_proc=1,
         remove_columns=dataset['train'].column_names,
         desc='Tokenizing',
     )
@@ -107,11 +107,16 @@ def main():
         target_modules=config['target_modules'],
     )
 
-    logger.info("Trainable parameters:")
     model = get_peft_model(model, lora_config)
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"Total parameters: {total_params}")
+    logger.info(f"Trainable parameters: {trainable_params}")
+    logger.info(f"Trainable parameters (%): {trainable_params / total_params * 100:.2f}%")
 
     training_args = TrainingArguments(
         output_dir=str(output_dir),
+        fp16=config['fp16'],
         per_device_train_batch_size=config['batch_size'],
         per_device_eval_batch_size=config['batch_size'],
         learning_rate=config['learning_rate'],
@@ -154,4 +159,5 @@ def main():
     logger.info('Training completed!')
 
 if __name__ == '__main__':
+    mp.set_start_method('spawn')
     main()
